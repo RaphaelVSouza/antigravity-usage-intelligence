@@ -3731,6 +3731,34 @@
     </div>
   </div>
 
+  <!-- Subagents Audit (agent-audit) -->
+  <div class="chart-container" id="agent-audit-section">
+    <div class="chart-header">
+      <div class="chart-title">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        Subagents Audit (<span class="mono">agent-audit</span>)
+      </div>
+      <div id="agent-audit-summary-badges" style="display:flex; flex-wrap:wrap; gap:6px; align-items:center;"></div>
+    </div>
+    <div class="table-wrapper" style="max-height:320px; overflow-y:auto;">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Agent</th>
+            <th>Source</th>
+            <th style="text-align:right;">Execs</th>
+            <th style="text-align:right;">Calls</th>
+            <th style="text-align:right;">Blocks</th>
+            <th style="text-align:right;">Block %</th>
+            <th>Top Tools</th>
+          </tr>
+        </thead>
+        <tbody id="agent-audit-tbody"></tbody>
+      </table>
+    </div>
+    <div id="agent-audit-reasons" style="display:flex; flex-wrap:wrap; gap:6px; margin-top:10px;"></div>
+  </div>
+
   <!-- Session Details Drawer Backdrop & Drawer -->
   <div class="drawer-backdrop" id="drawer-backdrop"></div>
   <div class="drawer" id="session-drawer">
@@ -4228,6 +4256,58 @@
         item.className = 'tool-item';
         item.innerHTML = `<span class="mono" style="color:var(--accent-blue);">${escapeHtml(t.name)}</span> <span style="color:var(--text-muted); font-weight:600;">${t.count.toLocaleString()}</span>`;
         toolsContainer.appendChild(item);
+      });
+
+      // Render Subagents Audit
+      renderAgentAudit(data.agent_audit);
+    }
+
+    function renderAgentAudit(audit) {
+      const badgesEl = document.getElementById('agent-audit-summary-badges');
+      const tbody = document.getElementById('agent-audit-tbody');
+      const reasonsEl = document.getElementById('agent-audit-reasons');
+      if (!badgesEl || !tbody || !reasonsEl) return;
+
+      const t = (audit && audit.totals) || {};
+      const agents = (audit && audit.agents) || [];
+      const reasons = (audit && audit.top_block_reasons) || [];
+
+      badgesEl.innerHTML = `
+        <span class="tool-item" style="padding:3px 8px; font-size:11px;">Execs: <b>${(t.executions || 0).toLocaleString()}</b></span>
+        <span class="tool-item" style="padding:3px 8px; font-size:11px;">Calls: <b>${(t.calls || 0).toLocaleString()}</b></span>
+        <span class="tool-item" style="padding:3px 8px; font-size:11px; color:${(t.blocks || 0) > 0 ? '#f87171' : 'var(--text-muted)'};">Blocks: <b>${(t.blocks || 0).toLocaleString()}</b> (${t.block_rate_pct || 0}%)</span>
+        <span class="tool-item" style="padding:3px 8px; font-size:11px;">Agy: <b>${(t.agy_invocations || 0).toLocaleString()}</b></span>
+      `;
+
+      tbody.innerHTML = '';
+      if (!agents.length) {
+        tbody.innerHTML = '<tr><td colspan="7" style="color:var(--text-muted); text-align:center; padding:12px;">No subagent audit records in this range.</td></tr>';
+      } else {
+        agents.forEach(a => {
+          const tr = document.createElement('tr');
+          const toolsText = (a.top_tools || []).slice(0, 4).map(x => `${escapeHtml(x.name)}:${x.count}`).join(' · ') || '—';
+          const srcText = (a.sources || []).join(', ') || '—';
+          const blockColor = a.blocks > 0 ? '#f87171' : 'var(--text-muted)';
+          tr.innerHTML = `
+            <td class="mono" style="font-weight:600; color:var(--accent-blue);">${escapeHtml(a.name)}</td>
+            <td style="color:var(--text-muted); font-size:11px;">${escapeHtml(srcText)}</td>
+            <td style="text-align:right;" class="mono">${(a.executions || 0).toLocaleString()}</td>
+            <td style="text-align:right;" class="mono">${(a.calls || 0).toLocaleString()}</td>
+            <td style="text-align:right; color:${blockColor}; font-weight:600;" class="mono">${(a.blocks || 0).toLocaleString()}</td>
+            <td style="text-align:right; color:${blockColor};" class="mono">${(a.block_rate_pct || 0).toFixed(1)}%</td>
+            <td class="mono" style="font-size:11px; color:var(--text-muted);">${toolsText}</td>
+          `;
+          tbody.appendChild(tr);
+        });
+      }
+
+      reasonsEl.innerHTML = '';
+      reasons.forEach(r => {
+        const pill = document.createElement('div');
+        pill.className = 'tool-item';
+        pill.style.fontSize = '11px';
+        pill.innerHTML = `<span style="color:#f87171; font-weight:600;">x${r.count}</span> <span style="color:var(--text-muted);">${escapeHtml(r.reason)}</span>`;
+        reasonsEl.appendChild(pill);
       });
     }
 

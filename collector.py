@@ -46,6 +46,14 @@ def normalize_model_name(raw):
     if 'claude' in r and 'haiku' in r:
         return 'Claude Haiku 4.5'
 
+    # Gemini 4.x models (Antigravity 2.x)
+    if 'gemini-4-argon' in r or '4-argon' in r:
+        return f"Gemini 4 Pro ({r.replace('gemini-4-', '')})"
+    if 'gemini-4-hydrogen' in r or '4-hydrogen' in r:
+        return f"Gemini 4 Hydrogen ({r.replace('gemini-4-', '')})"
+    if r.startswith('gemini-4'):
+        return raw.strip()
+
     # Gemini 3.x models
     if '3.8-flash' in r or '3.8' in r:
         return 'Gemini 3.8 Flash'
@@ -63,6 +71,8 @@ def normalize_model_name(raw):
         return 'Gemini Pro Agent'
     if 'gemini-flash' in r:
         return 'Gemini 3 Flash'
+    if r.startswith('gemini-') or r.startswith('claude-'):
+        return raw.strip()
 
     return None
 
@@ -324,6 +334,7 @@ def parse_session_db(db_path, surface="IDE", brain_dir=None):
     tool_counts = defaultdict(int)
     tool_errors = 0
     first_prompt = ""
+    transcript_models = []
     
     if transcript_path and os.path.exists(transcript_path):
         try:
@@ -333,6 +344,10 @@ def parse_session_db(db_path, surface="IDE", brain_dir=None):
                         step = json.loads(line)
                         stype = step.get("type", "")
                         status = step.get("status", "")
+                        if stype == "PLANNER_RESPONSE" and step.get("model"):
+                            norm_tm = normalize_model_name(step.get("model"))
+                            if norm_tm:
+                                transcript_models.append(norm_tm)
                         if stype == "USER_INPUT" and not first_prompt:
                             raw_p = step.get("content", "")
                             clean_p = re.sub(r'<[^>]+>', ' ', raw_p).strip()
@@ -350,6 +365,9 @@ def parse_session_db(db_path, surface="IDE", brain_dir=None):
                         pass
         except Exception:
             pass
+
+    if transcript_models:
+        model_name = transcript_models[-1]
 
     total_input = sum(s["input_tokens"] for s in steps_data)
     total_cached = sum(s["cached_tokens"] for s in steps_data)
@@ -422,7 +440,7 @@ def sync_all_sessions(force=False):
                 cached_entry = cached_sessions.get(convo_id)
                 if cached_entry and cached_entry.get("mtime") == mtime and cached_entry.get("surface"):
                     old_m = cached_entry.get("model", "")
-                    if any(dep in old_m for dep in ["1.5", "2.5", "ID:", "Thinking Exp", "Flash 8B"]):
+                    if any(dep in old_m for dep in ["1.5", "2.5", "3.8 Flash", "ID:", "Thinking Exp", "Flash 8B"]):
                         pass  # re-parse for model name fix
                     elif cached_entry.get("date") != datetime.fromtimestamp(mtime).strftime('%Y-%m-%d'):
                         pass  # re-parse: session crossed midnight since last cache write
@@ -696,6 +714,7 @@ def generate_analytics(sessions, start_date=None, end_date=None):
 
     total_prompt_requests = total_input + total_cached
     cache_hit_rate = (total_cached / total_prompt_requests * 100) if total_prompt_requests > 0 else 0
+    agent_audit = collect_agent_audit(start_date, end_date)
 
     return {
         "time_range": {
@@ -735,6 +754,7 @@ def generate_analytics(sessions, start_date=None, end_date=None):
         "surfaces": dict(surfaces),
         "projects": projects_list,
         "top_tools": sorted([{"name": k, "count": v} for k, v in all_tools.items()], key=lambda x: x["count"], reverse=True)[:15],
+        "agent_audit": agent_audit,
         "recent_sessions": sorted(
             [
                 {
@@ -764,6 +784,228 @@ def generate_analytics(sessions, start_date=None, end_date=None):
             reverse=True
         )[:50]
     }
+
+def _iter_audit_files(audit_dir):
+    base = "agent-audit.jsonl"
+    if not os.path.isdir(audit_dir):
+        return []
+    files = []
+    for name in sorted(os.listdir(audit_dir)):
+        if name == base or name.startswith(base + "."):
+            files.append(os.path.join(audit_dir, name))
+    return files
+
+
+def _count_subagent_tools(convo_id):
+    if not convo_id:
+        return {}
+    counts = Counter()
+    for src in DATA_SOURCES:
+        t_path = os.path.join(src["root"], "brain", convo_id, ".system_generated", "logs", "transcript.jsonl")
+        if not os.path.exists(t_path):
+            continue
+        try:
+            with open(t_path, "r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    if '"tool_calls"' not in line:
+                        continue
+                    try:
+                        step = json.loads(line)
+                    except Exception:
+                        continue
+                    for tc in step.get("tool_calls") or []:
+                        name = tc.get("name")
+                        if name:
+                            counts[name] += 1
+        except Exception:
+            pass
+        break
+    return counts
+
+
+def collect_agent_audit(start_date=None, end_date=None):
+    """Aggregates ~/.claude/state/agent-audit.jsonl* and Antigravity invoke_subagent transcripts."""
+    audit_dir = os.environ.get("AGENT_AUDIT_DIR") or os.path.join(os.path.expanduser("~"), ".claude", "state")
+    agents = {}
+
+    def get_entry(name):
+        if name not in agents:
+            agents[name] = {
+                "chamadas": 0,
+                "bloqueios": 0,
+                "orfas": 0,
+                "erros": 0,
+                "sessoes": set(),
+                "agent_ids": set(),
+                "ferramentas": Counter(),
+                "motivos": Counter(),
+                "pares": {},
+                "agy_invocations": 0,
+                "agy_tool_calls": 0,
+                "sources": set(),
+            }
+        return agents[name]
+
+    # 1. Claude Code agent-audit.jsonl*
+    for fpath in _iter_audit_files(audit_dir):
+        try:
+            with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        r = json.loads(line)
+                    except Exception:
+                        continue
+                    ts = str(r.get("ts") or "")
+                    day = ts[:10]
+                    if len(day) != 10:
+                        continue
+                    if start_date and day < start_date:
+                        continue
+                    if end_date and day > end_date:
+                        continue
+
+                    ag_name = str(r.get("agente") or "?").strip() or "?"
+                    e = get_entry(ag_name)
+                    e["sources"].add("claude")
+                    if r.get("sessao"):
+                        e["sessoes"].add(r["sessao"])
+                    if r.get("agent_id"):
+                        e["agent_ids"].add(r["agent_id"])
+
+                    tool_name = str(r.get("ferramenta") or "?")
+                    chave = f"{r.get('agent_id')}|{tool_name}|{r.get('alvo')}"
+                    par = e["pares"].setdefault(chave, {"chamadas": 0, "bloqueios": 0, "ferramenta": tool_name})
+                    if r.get("bloqueado"):
+                        e["bloqueios"] += 1
+                        par["bloqueios"] += 1
+                        motivo = str(r.get("motivo") or "sem motivo")
+                        e["motivos"][motivo] += 1
+                    else:
+                        e["chamadas"] += 1
+                        par["chamadas"] += 1
+                        if r.get("erro"):
+                            e["erros"] += 1
+                        e["ferramentas"][tool_name] += 1
+        except Exception:
+            continue
+
+    for e in agents.values():
+        for par in e["pares"].values():
+            falta = max(0, par["bloqueios"] - par["chamadas"])
+            e["orfas"] += falta
+            if falta:
+                e["ferramentas"][par["ferramenta"]] += falta
+        e["chamadas"] += e["orfas"]
+
+    # 2. Antigravity invoke_subagent transcripts
+    seen_convos = set()
+    for src in DATA_SOURCES:
+        brain_dir = os.path.join(src["root"], "brain")
+        if not os.path.isdir(brain_dir):
+            continue
+        for t_path in glob.glob(os.path.join(brain_dir, "*", ".system_generated", "logs", "transcript.jsonl")):
+            try:
+                with open(t_path, "r", encoding="utf-8", errors="replace") as f:
+                    invoked_by_call = {}
+                    for line in f:
+                        if "invoke_subagent" not in line and "conversationId" not in line:
+                            continue
+                        try:
+                            step = json.loads(line)
+                        except Exception:
+                            continue
+                        created = str(step.get("created_at") or "")
+                        day = created[:10]
+                        if start_date and day and day < start_date:
+                            continue
+                        if end_date and day and day > end_date:
+                            continue
+                        for tc in step.get("tool_calls") or []:
+                            if tc.get("name") != "invoke_subagent":
+                                continue
+                            args = tc.get("args") or {}
+                            tname = str(args.get("TypeName") or "subagent").strip().strip('"') or "subagent"
+                            e = get_entry(tname)
+                            e["sources"].add("agy")
+                            e["agy_invocations"] += 1
+                            if tc.get("id"):
+                                invoked_by_call[tc["id"]] = tname
+                        if step.get("type") == "TOOL_RESPONSE" or "conversationId" in line:
+                            cid = None
+                            content = step.get("content")
+                            if isinstance(content, str) and "conversationId" in content:
+                                m = re.search(r'"conversationId"\s*:\s*"([a-f0-9-]+)"', content)
+                                if m:
+                                    cid = m.group(1)
+                            if cid and cid not in seen_convos:
+                                seen_convos.add(cid)
+                                call_id = step.get("tool_call_id") or ""
+                                tname = invoked_by_call.get(call_id)
+                                if tname and tname in agents:
+                                    sub_tools = _count_subagent_tools(cid)
+                                    for tn, cnt in sub_tools.items():
+                                        agents[tname]["ferramentas"][tn] += cnt
+                                        agents[tname]["agy_tool_calls"] += cnt
+            except Exception:
+                continue
+
+    top_reasons = Counter()
+    agents_list = []
+    tot_exec = tot_calls = tot_blocks = tot_orphans = tot_errors = tot_agy = tot_claude_calls = 0
+
+    for name, e in agents.items():
+        executions = len(e["agent_ids"]) + e["agy_invocations"]
+        calls = e["chamadas"] + e["agy_tool_calls"]
+        blocks = e["bloqueios"]
+        rate = round((blocks / e["chamadas"]) * 100, 1) if e["chamadas"] > 0 else 0.0
+        for r_txt, r_cnt in e["motivos"].items():
+            top_reasons[r_txt] += r_cnt
+
+        tot_exec += executions
+        tot_calls += calls
+        tot_blocks += blocks
+        tot_orphans += e["orfas"]
+        tot_errors += e["erros"]
+        tot_agy += e["agy_invocations"]
+        tot_claude_calls += e["chamadas"]
+
+        agents_list.append({
+            "name": name,
+            "executions": executions,
+            "agy_invocations": e["agy_invocations"],
+            "calls": calls,
+            "claude_calls": e["chamadas"],
+            "agy_tool_calls": e["agy_tool_calls"],
+            "blocks": blocks,
+            "orphans": e["orfas"],
+            "errors": e["erros"],
+            "block_rate_pct": rate,
+            "sessions": len(e["sessoes"]),
+            "top_tools": [{"name": k, "count": v} for k, v in e["ferramentas"].most_common(5)],
+            "sources": sorted(e["sources"]),
+        })
+
+    agents_list.sort(key=lambda x: (x["calls"], x["executions"]), reverse=True)
+
+    return {
+        "totals": {
+            "agents": len(agents_list),
+            "executions": tot_exec,
+            "calls": tot_calls,
+            "claude_calls": tot_claude_calls,
+            "agy_invocations": tot_agy,
+            "blocks": tot_blocks,
+            "orphans": tot_orphans,
+            "errors": tot_errors,
+            "block_rate_pct": round((tot_blocks / tot_claude_calls) * 100, 1) if tot_claude_calls > 0 else 0.0,
+        },
+        "agents": agents_list,
+        "top_block_reasons": [{"reason": k, "count": v} for k, v in top_reasons.most_common(5)],
+    }
+
 
 def build_demo_sessions():
     """Deterministic sample ledger for screenshots, UI testing, and first-run preview.
