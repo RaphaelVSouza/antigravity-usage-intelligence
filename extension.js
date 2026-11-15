@@ -221,7 +221,7 @@ async function updateStatusBar(todayData) {
   if (!statusBarItem) return;
   try {
     const today = getLocalDateString();
-    const data = todayData || await fetchStatsData(['--start', today, '--end', today]);
+    const data = todayData || await fetchStatsData(['--start', today, '--end', today, '--summary-only']);
     const tokens = data.summary.total_tokens;
     if (data.summary.total_sessions === 0) {
       statusBarItem.text = `$(graph) AI: no data`;
@@ -470,12 +470,16 @@ function activate(context) {
 
       fullPanel.webview.html = getWebviewContent(fullPanel.webview, context.extensionUri);
 
-      fullPanel.webview.onDidReceiveMessage(async (message) => {
+      const panelMsgSub = fullPanel.webview.onDidReceiveMessage(async (message) => {
         await handleWebviewMessage(fullPanel.webview, message);
       });
+      context.subscriptions.push(panelMsgSub);
 
       fullPanel.onDidDispose(() => {
         fullPanel = null;
+        panelMsgSub.dispose();
+        const idx = context.subscriptions.indexOf(panelMsgSub);
+        if (idx >= 0) context.subscriptions.splice(idx, 1);
       }, null, context.subscriptions);
     })
   );

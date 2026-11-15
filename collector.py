@@ -32,6 +32,8 @@ DATA_SOURCES = [
     {"name": "CLI", "root": os.path.join(GEMINI_HOME, "antigravity-cli")},
 ]
 
+_MODEL_SLUG_RE = re.compile(r'(?:gemini-[a-zA-Z0-9.\-]+|claude-[a-zA-Z0-9.\-]+)')
+
 def normalize_model_name(raw):
     """Maps raw model identifier strings to clean frontier display names (Gemini 3.x, Claude 4.x)"""
     if not raw:
@@ -191,6 +193,8 @@ def parse_session_db(db_path, surface="IDE", brain_dir=None):
         return None
 
     convo_id = os.path.splitext(os.path.basename(db_path))[0]
+    db_mtime = os.path.getmtime(db_path)
+    db_mtime_int = int(db_mtime)
     
     try:
         with closing(open_readonly_db(db_path)) as con:
@@ -220,8 +224,8 @@ def parse_session_db(db_path, surface="IDE", brain_dir=None):
                 for s_idx, data in rows:
                     if data:
                         txt = data.decode('latin-1', errors='ignore')
-                        for m in re.findall(r'(?:gemini-[a-zA-Z0-9\.\-]+|claude-[a-zA-Z0-9\.\-]+)', txt):
-                            norm = normalize_model_name(m)
+                        for m in _MODEL_SLUG_RE.finditer(txt):
+                            norm = normalize_model_name(m.group(0))
                             if norm:
                                 step_models[s_idx] = norm
                                 all_detected_models.append(norm)
@@ -235,8 +239,8 @@ def parse_session_db(db_path, surface="IDE", brain_dir=None):
                     for r in cur.execute('SELECT idx, data FROM gen_metadata ORDER BY idx DESC LIMIT 20'):
                         if r[1]:
                             txt = r[1].decode('latin-1', errors='ignore')
-                            for m in re.findall(r'(?:gemini-[a-zA-Z0-9\.\-]+|claude-[a-zA-Z0-9\.\-]+)', txt):
-                                norm = normalize_model_name(m)
+                            for m in _MODEL_SLUG_RE.finditer(txt):
+                                norm = normalize_model_name(m.group(0))
                                 if norm:
                                     all_detected_models.append(norm)
                                     break
@@ -248,7 +252,13 @@ def parse_session_db(db_path, surface="IDE", brain_dir=None):
             default_session_model = Counter(all_detected_models).most_common(1)[0][0] if all_detected_models else "Gemini 3.8 Flash"
 
             # 2. Extract model name & token usage from gen_metadata
-            steps_data = []
+            turn_count = 0
+            total_input = 0
+            total_cached = 0
+            total_output = 0
+            total_thinking = 0
+            start_ts = None
+            end_ts = None
             session_models_used = []
             
             try:
@@ -266,7 +276,6 @@ def parse_session_db(db_path, surface="IDE", brain_dir=None):
                                         inp = usage.get(2, [(0, 0)])[0][1]
                                         out = usage.get(3, [(0, 0)])[0][1]
                                         cached = usage.get(5, [(0, 0)])[0][1]
-                                        text_out = usage.get(9, [(0, 0)])[0][1]
                                         thinking = usage.get(10, [(0, 0)])[0][1]
                                         
                                         step_model = step_models.get(idx)
@@ -275,22 +284,16 @@ def parse_session_db(db_path, surface="IDE", brain_dir=None):
                                         
                                         session_models_used.append(step_model)
                                             
-                                        ts = step_times.get(idx)
-                                        if not ts:
-                                            ts = int(os.path.getmtime(db_path))
-                                            
-                                        steps_data.append({
-                                            "idx": idx,
-                                            "timestamp": ts,
-                                            "date": datetime.fromtimestamp(ts).strftime('%Y-%m-%d'),
-                                            "model": step_model,
-                                            "input_tokens": inp,
-                                            "cached_tokens": cached,
-                                            "output_tokens": out,
-                                            "text_tokens": text_out,
-                                            "thinking_tokens": thinking,
-                                            "total_tokens": inp + cached + out
-                                        })
+                                        ts = step_times.get(idx) or db_mtime_int
+                                        if start_ts is None:
+                                            start_ts = ts
+                                        end_ts = ts
+
+                                        turn_count += 1
+                                        total_input += inp
+                                        total_cached += cached
+                                        total_output += out
+                                        total_thinking += thinking
                     except Exception:
                         pass
             except Exception:
@@ -318,7 +321,7 @@ def parse_session_db(db_path, surface="IDE", brain_dir=None):
         sys.stderr.write(f"Warning: could not read {db_path}: {err}\n")
         return None
     
-    if not steps_data:
+    if not turn_count:
         return None
 
     # 3. Read transcript tool calls and errors across candidate brain directories
@@ -346,6 +349,8 @@ def parse_session_db(db_path, surface="IDE", brain_dir=None):
         try:
             with open(transcript_path, 'r', encoding='utf-8', errors='ignore') as f:
                 for line in f:
+                    if '"tool_calls"' not in line and 'ERROR' not in line and '"PLANNER_RESPONSE"' not in line and (first_prompt or '"USER_INPUT"' not in line):
+                        continue
                     try:
                         step = json.loads(line)
                         stype = step.get("type", "")
@@ -375,17 +380,13 @@ def parse_session_db(db_path, surface="IDE", brain_dir=None):
     if transcript_models:
         model_name = transcript_models[-1]
 
-    total_input = sum(s["input_tokens"] for s in steps_data)
-    total_cached = sum(s["cached_tokens"] for s in steps_data)
-    total_output = sum(s["output_tokens"] for s in steps_data)
-    total_thinking = sum(s["thinking_tokens"] for s in steps_data)
-    
-    start_ts = steps_data[0]["timestamp"] if steps_data else int(os.path.getmtime(db_path))
-    end_ts = steps_data[-1]["timestamp"] if steps_data else start_ts
-    db_mtime = os.path.getmtime(db_path)
+    if start_ts is None:
+        start_ts = db_mtime_int
+    if end_ts is None:
+        end_ts = start_ts
     # Use the LATEST of (last step timestamp, db mtime) as the session's active date.
     # This ensures sessions that span midnight always appear in the correct day's view.
-    last_active_ts = max(end_ts, int(db_mtime))
+    last_active_ts = max(end_ts, db_mtime_int)
     
     return {
         "convo_id": convo_id,
@@ -398,7 +399,7 @@ def parse_session_db(db_path, surface="IDE", brain_dir=None):
         "project": project_name,
         "workspace_path": workspace_path,
         "title": first_prompt if first_prompt else f"Session {convo_id[:8]}",
-        "turn_count": len(steps_data),
+        "turn_count": turn_count,
         "input_tokens": total_input,
         "cached_tokens": total_cached,
         "output_tokens": total_output,
@@ -489,7 +490,7 @@ def sync_all_sessions(force=False):
             
     return cached_sessions
 
-def generate_analytics(sessions, start_date=None, end_date=None):
+def generate_analytics(sessions, start_date=None, end_date=None, summary_only=False):
     """Calculates comprehensive time-range statistics with cost, streaks, and hourly flow"""
     filtered_sessions = []
     
@@ -620,8 +621,8 @@ def generate_analytics(sessions, start_date=None, end_date=None):
     window_turns = sum(s.get("turn_count", 0) for s in recent_5h)
     ACTIVE_WINDOW_SEC = 120
     RECENT_WINDOW_SEC = 900
-    is_active = any((now_ts - s.get("mtime", 0)) < ACTIVE_WINDOW_SEC for s in sessions.values())
-    is_recent = any((now_ts - s.get("mtime", 0)) < RECENT_WINDOW_SEC for s in sessions.values())
+    is_active = any((now_ts - s.get("mtime", 0)) < ACTIVE_WINDOW_SEC for s in recent_5h)
+    is_recent = any((now_ts - s.get("mtime", 0)) < RECENT_WINDOW_SEC for s in recent_5h)
 
     if recent_5h:
         oldest_ts = min(s.get("mtime", 0) for s in recent_5h)
@@ -734,7 +735,11 @@ def generate_analytics(sessions, start_date=None, end_date=None):
 
     total_prompt_requests = total_input + total_cached
     cache_hit_rate = (total_cached / total_prompt_requests * 100) if total_prompt_requests > 0 else 0
-    agent_audit = collect_agent_audit(start_date, end_date)
+    agent_audit = (
+        {"totals": {"agents": 0, "executions": 0, "calls": 0, "claude_calls": 0, "agy_invocations": 0, "blocks": 0, "orphans": 0, "errors": 0, "block_rate_pct": 0.0}, "agents": [], "top_block_reasons": []}
+        if summary_only
+        else collect_agent_audit(start_date, end_date)
+    )
 
     return {
         "time_range": {
@@ -1158,7 +1163,7 @@ if __name__ == "__main__":
                 start_date = sys.argv[i + 1]
             if arg == "--end" and i + 1 < len(sys.argv):
                 end_date = sys.argv[i + 1]
-        data = generate_analytics(sessions, start_date, end_date)
+        data = generate_analytics(sessions, start_date, end_date, summary_only="--summary-only" in sys.argv)
         print(json.dumps(data))
     else:
         data = generate_analytics(sessions)

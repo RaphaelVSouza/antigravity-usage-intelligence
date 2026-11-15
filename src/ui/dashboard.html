@@ -4295,7 +4295,7 @@
     // Lightweight payload fingerprint (length + djb2 over JSON) to detect unchanged polls.
     let lastPayloadSig = null;
     function payloadSignature(data) {
-      const s = JSON.stringify(data);
+      const s = JSON.stringify(data, (k, v) => (k === 'fetched_at' ? undefined : v));
       let h = 5381;
       for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
       return s.length + ':' + h;
@@ -6030,6 +6030,7 @@
 
     // Live countdown ticker: ticks the quota timer every second between data loads.
     setInterval(() => {
+      if (document.hidden) return;
       const t = document.getElementById('quota-timer-text');
       const iso = window.__quotaResetIso;
       if (!t || !iso) return;
