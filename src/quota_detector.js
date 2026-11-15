@@ -6,6 +6,19 @@ let cachedConn = null;
 let cachedQuota = null;
 let lastQueryTime = 0;
 
+// Negative cache: after failed language-server scans, back off exponentially
+// (30s, 60s, ... capped at 10 min) instead of re-running PowerShell/netstat/probes every poll.
+const SCAN_BACKOFF_BASE_MS = 30000;
+const SCAN_BACKOFF_MAX_MS = 600000;
+let scanFailures = 0;
+let nextScanAt = 0;
+
+function recordScanFailure() {
+  scanFailures += 1;
+  const delay = Math.min(SCAN_BACKOFF_BASE_MS * 2 ** (scanFailures - 1), SCAN_BACKOFF_MAX_MS);
+  nextScanAt = Date.now() + delay;
+}
+
 function execCommand(cmd) {
   return new Promise((resolve) => {
     exec(cmd, { timeout: 4000 }, (err, stdout, stderr) => {
@@ -95,11 +108,13 @@ async function listListeningPorts(pid) {
   const ports = new Set();
   try {
     if (process.platform === 'win32') {
-      const netCmd = `netstat -ano | findstr "LISTENING" | findstr " ${pid}"`;
-      const { stdout: netOut } = await execCommand(netCmd);
+      // Filtra o PID na coluna exata (última) em JS: evita casar PID 12 com 123.
+      const { stdout: netOut } = await execCommand('netstat -ano');
       if (netOut) {
         for (const line of netOut.split('\n')) {
-          const m = line.trim().match(/:(\d+)\s+.*LISTENING/);
+          const cols = line.trim().split(/\s+/);
+          if (cols.length < 5 || cols[cols.length - 1] !== String(pid) || cols[3] !== 'LISTENING') continue;
+          const m = cols[1].match(/:(\d+)$/);
           if (m) ports.add(parseInt(m[1], 10));
         }
       }
@@ -142,17 +157,10 @@ async function scanForLanguageServer() {
     const csrfToken = tokenMatch[1];
     const extPort = extPortMatch ? parseInt(extPortMatch[1], 10) : 0;
 
-    const ports = new Set();
-    if (extPort > 0) {
-      ports.add(extPort);
-      ports.add(extPort + 1);
-      ports.add(extPort + 2);
-    }
-    for (const p of await listListeningPorts(pid)) ports.add(p);
-
-    // Bound worst-case probe time: cap ports, probe all in parallel,
-    // return the first endpoint that answers with a userStatus.
-    const portList = [...ports].filter((p) => p > 0 && p < 65536).slice(0, 25);
+    // Só probe portas escutadas pelo próprio PID: o token CSRF nunca vai a portas arbitrárias.
+    // (extPort, extPort+1, extPort+2 são palpites e não são usados para enviar o token.)
+    const owned = await listListeningPorts(pid);
+    const portList = [...owned].filter((p) => p > 0 && p < 65536).slice(0, 25);
     const probes = [];
     for (const port of portList) {
       for (const proto of ['https', 'http']) {
@@ -245,22 +253,27 @@ async function getLiveQuota(forceRefresh = false) {
     cachedConn = null;
   }
 
-  // 2. Scan for language server
-  try {
-    const conn = await scanForLanguageServer();
-    if (conn) {
-      cachedConn = {
-        port: conn.port,
-        protocol: conn.protocol,
-        csrfToken: conn.csrfToken,
-        pid: conn.pid,
-      };
-      cachedQuota = parseQuotaFromStatus(conn.rawStatus);
-      lastQueryTime = now;
-      return cachedQuota;
+  // 2. Scan for language server (skipped during backoff; a forced refresh always scans)
+  if (forceRefresh || Date.now() >= nextScanAt) {
+    try {
+      const conn = await scanForLanguageServer();
+      if (conn) {
+        scanFailures = 0;
+        nextScanAt = 0;
+        cachedConn = {
+          port: conn.port,
+          protocol: conn.protocol,
+          csrfToken: conn.csrfToken,
+          pid: conn.pid,
+        };
+        cachedQuota = parseQuotaFromStatus(conn.rawStatus);
+        lastQueryTime = now;
+        return cachedQuota;
+      }
+      recordScanFailure();
+    } catch (err) {
+      recordScanFailure();
     }
-  } catch (err) {
-    // Graceful fallback
   }
 
   // Scan failed: serve last-known data explicitly marked stale

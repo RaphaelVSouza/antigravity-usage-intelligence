@@ -20,6 +20,12 @@ CACHE_FILE = os.path.join(os.path.expanduser("~"), ".gemini", "antigravity", "an
 
 GEMINI_HOME = os.path.join(os.path.expanduser("~"), ".gemini")
 
+# Versão da lógica de parse de sessão. Entradas do cache com outra versão são reparseadas.
+PARSER_VERSION = 2
+# Cache dedicado dos transcripts lidos por collect_agent_audit (chave: path, mtime, size).
+AUDIT_CACHE_FILE = os.path.join(GEMINI_HOME, "antigravity", "agent_audit_transcript_cache.json")
+AUDIT_PARSER_VERSION = 1
+
 DATA_SOURCES = [
     {"name": "IDE", "root": os.path.join(GEMINI_HOME, "antigravity-ide")},
     {"name": "Core", "root": os.path.join(GEMINI_HOME, "antigravity")},
@@ -193,7 +199,7 @@ def parse_session_db(db_path, surface="IDE", brain_dir=None):
             # 1. Map step idx to timestamp
             step_times = {}
             try:
-                for r in cur.execute('SELECT idx, metadata FROM steps WHERE metadata IS NOT NULL').fetchall():
+                for r in cur.execute('SELECT idx, metadata FROM steps WHERE metadata IS NOT NULL'):
                     try:
                         s_proto = parse_proto(r[1])
                         if 1 in s_proto:
@@ -210,7 +216,7 @@ def parse_session_db(db_path, surface="IDE", brain_dir=None):
             step_models = {}
             all_detected_models = []
             try:
-                rows = cur.execute('SELECT idx, data FROM executor_metadata ORDER BY idx ASC').fetchall()
+                rows = cur.execute('SELECT idx, data FROM executor_metadata ORDER BY idx ASC')
                 for s_idx, data in rows:
                     if data:
                         txt = data.decode('latin-1', errors='ignore')
@@ -226,7 +232,7 @@ def parse_session_db(db_path, surface="IDE", brain_dir=None):
             # Fallback search in gen_metadata if executor_metadata had no model slugs
             if not all_detected_models:
                 try:
-                    for r in cur.execute('SELECT idx, data FROM gen_metadata ORDER BY idx DESC LIMIT 20').fetchall():
+                    for r in cur.execute('SELECT idx, data FROM gen_metadata ORDER BY idx DESC LIMIT 20'):
                         if r[1]:
                             txt = r[1].decode('latin-1', errors='ignore')
                             for m in re.findall(r'(?:gemini-[a-zA-Z0-9\.\-]+|claude-[a-zA-Z0-9\.\-]+)', txt):
@@ -246,7 +252,7 @@ def parse_session_db(db_path, surface="IDE", brain_dir=None):
             session_models_used = []
             
             try:
-                rows = cur.execute('SELECT idx, data FROM gen_metadata ORDER BY idx ASC').fetchall()
+                rows = cur.execute('SELECT idx, data FROM gen_metadata ORDER BY idx ASC')
                 for idx, data in rows:
                     try:
                         top = parse_proto(data)
@@ -399,7 +405,8 @@ def parse_session_db(db_path, surface="IDE", brain_dir=None):
         "thinking_tokens": total_thinking,
         "total_tokens": total_input + total_cached + total_output,
         "tool_counts": dict(tool_counts),
-        "tool_errors": tool_errors
+        "tool_errors": tool_errors,
+        "parser_version": PARSER_VERSION
     }
 
 def sync_all_sessions(force=False):
@@ -415,7 +422,9 @@ def sync_all_sessions(force=False):
     cached_sessions = cache.get("sessions", {})
     updated = False
     found_any_source = False
-    
+    seen_ids = set()
+    scanned_surfaces = set()
+
     for src in DATA_SOURCES:
         root = src["root"]
         surface = src["name"]
@@ -424,29 +433,33 @@ def sync_all_sessions(force=False):
         if not os.path.exists(convos_dir):
             continue
         found_any_source = True
+        scanned_surfaces.add(surface)
 
         db_files = glob.glob(os.path.join(convos_dir, "*.db"))
         for db_path in db_files:
+            convo_id = os.path.splitext(os.path.basename(db_path))[0]
+            seen_ids.add(convo_id)
             try:
                 if not os.path.exists(db_path) or os.path.getsize(db_path) == 0:
                     continue
-                convo_id = os.path.splitext(os.path.basename(db_path))[0]
                 mtime = os.path.getmtime(db_path)
-                
+
                 # Check cache validity
-                # Re-parse if: mtime changed, model name is legacy/deprecated, OR
+                # Re-parse if: mtime changed, parser_version differs, OR
                 # the cached date doesn't match what the current mtime implies
                 # (catches sessions that were created on one day and are still active today)
                 cached_entry = cached_sessions.get(convo_id)
                 if cached_entry and cached_entry.get("mtime") == mtime and cached_entry.get("surface"):
                     old_m = cached_entry.get("model", "")
-                    if any(dep in old_m for dep in ["1.5", "2.5", "3.8 Flash", "ID:", "Thinking Exp", "Flash 8B"]):
+                    if cached_entry.get("parser_version") != PARSER_VERSION:
+                        pass  # re-parse: entrada gerada por parser de outra versão
+                    elif any(dep in old_m for dep in ["1.5", "2.5", "ID:", "Thinking Exp", "Flash 8B"]):
                         pass  # re-parse for model name fix
                     elif cached_entry.get("date") != datetime.fromtimestamp(mtime).strftime('%Y-%m-%d'):
                         pass  # re-parse: session crossed midnight since last cache write
                     else:
                         continue
-                    
+
                 # Parse database
                 session_info = parse_session_db(db_path, surface=surface, brain_dir=brain_dir)
                 if session_info and session_info.get("turn_count", 0) > 0:
@@ -454,7 +467,14 @@ def sync_all_sessions(force=False):
                     updated = True
             except Exception as e:
                 sys.stderr.write(f"Warning: skipped {db_path}: {e}\n")
-            
+
+    # Poda: remove do cache IDs cujo .db não existe mais (só em surfaces efetivamente varridas)
+    for cid in list(cached_sessions):
+        entry = cached_sessions[cid]
+        if cid not in seen_ids and entry.get("surface") in scanned_surfaces:
+            del cached_sessions[cid]
+            updated = True
+
     if updated or (not os.path.exists(CACHE_FILE) and found_any_source):
         cache["sessions"] = cached_sessions
         cache["last_sync"] = int(datetime.now().timestamp())
@@ -796,31 +816,121 @@ def _iter_audit_files(audit_dir):
     return files
 
 
-def _count_subagent_tools(convo_id):
+def _load_audit_cache():
+    try:
+        with open(AUDIT_CACHE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict) and data.get("parser_version") == AUDIT_PARSER_VERSION and isinstance(data.get("files"), dict):
+            return data
+    except Exception:
+        pass
+    return {"parser_version": AUDIT_PARSER_VERSION, "files": {}}
+
+
+def _save_audit_cache(data):
+    tmp_file = AUDIT_CACHE_FILE + ".tmp"
+    try:
+        os.makedirs(os.path.dirname(AUDIT_CACHE_FILE), exist_ok=True)
+        with open(tmp_file, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        os.replace(tmp_file, AUDIT_CACHE_FILE)
+    except Exception as e:
+        sys.stderr.write(f"Warning: audit cache write failed: {e}\n")
+
+
+class _TranscriptCache:
+    """Cache de parse de transcript.jsonl por (parser, path, mtime, size). Não relê arquivo inalterado."""
+
+    def __init__(self):
+        self.data = _load_audit_cache()
+        self.dirty = False
+        self.touched = set()
+
+    def get(self, path, parser):
+        key = f"{parser.__name__}|{path}"
+        self.touched.add(key)
+        try:
+            st = os.stat(path)
+        except OSError:
+            return None
+        ent = self.data["files"].get(key)
+        if ent and ent.get("mtime") == st.st_mtime and ent.get("size") == st.st_size:
+            return ent.get("result")
+        result = parser(path)
+        self.data["files"][key] = {"mtime": st.st_mtime, "size": st.st_size, "result": result}
+        self.dirty = True
+        return result
+
+    def finish(self):
+        for key in [k for k in self.data["files"] if k not in self.touched]:
+            del self.data["files"][key]
+            self.dirty = True
+        if self.dirty:
+            _save_audit_cache(self.data)
+
+
+def _parse_transcript_events(t_path):
+    """Eventos de invoke_subagent e conversationId de um transcript, sem filtro de data (filtrado depois)."""
+    events = []
+    try:
+        with open(t_path, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if "invoke_subagent" not in line and "conversationId" not in line:
+                    continue
+                try:
+                    step = json.loads(line)
+                except Exception:
+                    continue
+                day = str(step.get("created_at") or "")[:10]
+                calls = []
+                for tc in step.get("tool_calls") or []:
+                    if tc.get("name") != "invoke_subagent":
+                        continue
+                    args = tc.get("args") or {}
+                    tname = str(args.get("TypeName") or "subagent").strip().strip('"') or "subagent"
+                    calls.append([tc.get("id") or "", tname])
+                cid_ev = None
+                if step.get("type") == "TOOL_RESPONSE" or "conversationId" in line:
+                    content = step.get("content")
+                    if isinstance(content, str) and "conversationId" in content:
+                        m = re.search(r'"conversationId"\s*:\s*"([a-f0-9-]+)"', content)
+                        if m:
+                            cid_ev = [m.group(1), step.get("tool_call_id") or ""]
+                events.append([day, calls, cid_ev])
+    except Exception:
+        pass
+    return events
+
+
+def _parse_subagent_tool_counts(t_path):
+    counts = Counter()
+    try:
+        with open(t_path, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if '"tool_calls"' not in line:
+                    continue
+                try:
+                    step = json.loads(line)
+                except Exception:
+                    continue
+                for tc in step.get("tool_calls") or []:
+                    name = tc.get("name")
+                    if name:
+                        counts[name] += 1
+    except Exception:
+        pass
+    return dict(counts)
+
+
+def _count_subagent_tools(convo_id, tcache):
     if not convo_id:
         return {}
-    counts = Counter()
     for src in DATA_SOURCES:
         t_path = os.path.join(src["root"], "brain", convo_id, ".system_generated", "logs", "transcript.jsonl")
         if not os.path.exists(t_path):
             continue
-        try:
-            with open(t_path, "r", encoding="utf-8", errors="replace") as f:
-                for line in f:
-                    if '"tool_calls"' not in line:
-                        continue
-                    try:
-                        step = json.loads(line)
-                    except Exception:
-                        continue
-                    for tc in step.get("tool_calls") or []:
-                        name = tc.get("name")
-                        if name:
-                            counts[name] += 1
-        except Exception:
-            pass
-        break
-    return counts
+        return tcache.get(t_path, _parse_subagent_tool_counts) or {}
+    return {}
 
 
 def collect_agent_audit(start_date=None, end_date=None):
@@ -900,57 +1010,37 @@ def collect_agent_audit(start_date=None, end_date=None):
                 e["ferramentas"][par["ferramenta"]] += falta
         e["chamadas"] += e["orfas"]
 
-    # 2. Antigravity invoke_subagent transcripts
+    # 2. Antigravity invoke_subagent transcripts (parse cacheado por path/mtime/size; filtro de data aplicado no replay)
+    tcache = _TranscriptCache()
     seen_convos = set()
     for src in DATA_SOURCES:
         brain_dir = os.path.join(src["root"], "brain")
         if not os.path.isdir(brain_dir):
             continue
         for t_path in glob.glob(os.path.join(brain_dir, "*", ".system_generated", "logs", "transcript.jsonl")):
-            try:
-                with open(t_path, "r", encoding="utf-8", errors="replace") as f:
-                    invoked_by_call = {}
-                    for line in f:
-                        if "invoke_subagent" not in line and "conversationId" not in line:
-                            continue
-                        try:
-                            step = json.loads(line)
-                        except Exception:
-                            continue
-                        created = str(step.get("created_at") or "")
-                        day = created[:10]
-                        if start_date and day and day < start_date:
-                            continue
-                        if end_date and day and day > end_date:
-                            continue
-                        for tc in step.get("tool_calls") or []:
-                            if tc.get("name") != "invoke_subagent":
-                                continue
-                            args = tc.get("args") or {}
-                            tname = str(args.get("TypeName") or "subagent").strip().strip('"') or "subagent"
-                            e = get_entry(tname)
-                            e["sources"].add("agy")
-                            e["agy_invocations"] += 1
-                            if tc.get("id"):
-                                invoked_by_call[tc["id"]] = tname
-                        if step.get("type") == "TOOL_RESPONSE" or "conversationId" in line:
-                            cid = None
-                            content = step.get("content")
-                            if isinstance(content, str) and "conversationId" in content:
-                                m = re.search(r'"conversationId"\s*:\s*"([a-f0-9-]+)"', content)
-                                if m:
-                                    cid = m.group(1)
-                            if cid and cid not in seen_convos:
-                                seen_convos.add(cid)
-                                call_id = step.get("tool_call_id") or ""
-                                tname = invoked_by_call.get(call_id)
-                                if tname and tname in agents:
-                                    sub_tools = _count_subagent_tools(cid)
-                                    for tn, cnt in sub_tools.items():
-                                        agents[tname]["ferramentas"][tn] += cnt
-                                        agents[tname]["agy_tool_calls"] += cnt
-            except Exception:
-                continue
+            events = tcache.get(t_path, _parse_transcript_events) or []
+            invoked_by_call = {}
+            for day, calls, cid_ev in events:
+                if start_date and day and day < start_date:
+                    continue
+                if end_date and day and day > end_date:
+                    continue
+                for call_id, tname in calls:
+                    e = get_entry(tname)
+                    e["sources"].add("agy")
+                    e["agy_invocations"] += 1
+                    if call_id:
+                        invoked_by_call[call_id] = tname
+                if cid_ev:
+                    cid, call_id = cid_ev
+                    if cid not in seen_convos:
+                        seen_convos.add(cid)
+                        tname = invoked_by_call.get(call_id)
+                        if tname and tname in agents:
+                            for tn, cnt in _count_subagent_tools(cid, tcache).items():
+                                agents[tname]["ferramentas"][tn] += cnt
+                                agents[tname]["agy_tool_calls"] += cnt
+    tcache.finish()
 
     top_reasons = Counter()
     agents_list = []

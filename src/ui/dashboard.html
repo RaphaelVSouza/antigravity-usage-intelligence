@@ -20,6 +20,20 @@
       --accent-rose: #f43f5e;
       --accent-emerald: #10b981;
       --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+
+      /* Layout & spotlight tokens (dark default; overridden once in the light block below) */
+      --sidebar-w: 148px;
+      --nav-bg: rgba(255, 255, 255, 0.025);
+      --nav-link-hover: rgba(255, 255, 255, 0.07);
+      --nav-link-active-bg: rgba(56, 189, 248, 0.14);
+      --spot-quota-bg: linear-gradient(135deg, rgba(56, 189, 248, 0.10), rgba(168, 85, 247, 0.08));
+      --spot-quota-border: rgba(56, 189, 248, 0.5);
+      --spot-quota-accent: #38bdf8;
+      --spot-audit-bg: linear-gradient(135deg, rgba(245, 158, 11, 0.09), rgba(244, 63, 94, 0.06));
+      --spot-audit-border: rgba(245, 158, 11, 0.5);
+      --spot-audit-accent: #fbbf24;
+      --spot-eyebrow: #94a3b8;
+      --section-title: #f1f5f9;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -30,7 +44,7 @@
       font-family: var(--font-family);
       font-size: 13px;
       line-height: 1.5;
-      padding: 14px;
+      padding: 0;
       user-select: none;
       position: relative;
     }
@@ -902,7 +916,7 @@
 
     @media (max-width: 580px) {
       .kpi-grid {
-        grid-template-columns: repeat(2, 1fr);
+        grid-template-columns: repeat(2, minmax(0, 1fr));
       }
       .kpi-card-hero {
         grid-column: span 2;
@@ -2273,6 +2287,18 @@
       --accent-amber: #d97706;
       --accent-rose: #e11d48;
       --accent-emerald: #059669;
+
+      --nav-bg: #f8fafc;
+      --nav-link-hover: #e2e8f0;
+      --nav-link-active-bg: #e0f2fe;
+      --spot-quota-bg: linear-gradient(135deg, #f0f9ff, #faf5ff);
+      --spot-quota-border: #0284c7;
+      --spot-quota-accent: #0284c7;
+      --spot-audit-bg: linear-gradient(135deg, #fffbeb, #fff1f2);
+      --spot-audit-border: #d97706;
+      --spot-audit-accent: #b45309;
+      --spot-eyebrow: #475569;
+      --section-title: #0f172a;
     }
 
     /* Cards & Containers */
@@ -3309,23 +3335,289 @@
       border-color: #0284c7;
       box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
     }
+
+    /* ==========================================================================
+       APP LAYOUT: narrow anchor sidebar + full-width main panel.
+       Placed last so it wins over earlier rules; colors come only from the
+       theme variables above (dark in :root, light in the single light block).
+       The window is the scroll container (JS relies on window.scrollTo).
+       ========================================================================== */
+    body { padding: 0; }
+
+    .app-shell {
+      display: grid;
+      grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+      min-height: 100vh;
+    }
+
+    .app-sidebar {
+      position: sticky;
+      top: 0;
+      align-self: start;
+      height: 100vh;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 14px 10px;
+      background: var(--nav-bg);
+      border-right: 1px solid var(--border-color);
+    }
+
+    .app-sidebar .brand h1 {
+      font-size: 12px;
+      line-height: 1.2;
+      letter-spacing: -0.2px;
+    }
+
+    .app-sidebar .brand { align-items: flex-start; }
+
+    .nav-list {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .nav-label {
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      padding: 6px 8px 3px;
+    }
+
+    .nav-link {
+      display: block;
+      padding: 5px 8px;
+      border-radius: 5px;
+      border-left: 2px solid transparent;
+      color: var(--text-muted);
+      font-size: 12px;
+      font-weight: 500;
+      text-decoration: none;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .nav-link:hover {
+      background: var(--nav-link-hover);
+      color: var(--text-primary);
+    }
+
+    .nav-link:focus-visible {
+      outline: 2px solid var(--accent-blue);
+      outline-offset: 1px;
+    }
+
+    .nav-link.nav-priority {
+      color: var(--text-primary);
+      font-weight: 600;
+    }
+
+    .nav-link.nav-quota { border-left-color: var(--spot-quota-accent); }
+    .nav-link.nav-audit { border-left-color: var(--spot-audit-accent); }
+
+    .app-main {
+      min-width: 0;
+      padding: 14px 18px 24px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .app-main .header {
+      position: static;
+      margin-bottom: 14px;
+      justify-content: space-between;
+    }
+
+    [id^="sec-"], #quota-banner, #agent-audit-section, #models-chart-card { scroll-margin-top: 16px; }
+    @media (max-width: 720px) {
+        [id^="sec-"], #quota-banner, #agent-audit-section, #models-chart-card { scroll-margin-top: 80px; }
+    }
+
+    .app-main .chart-title {
+      color: var(--section-title);
+      font-size: 13px;
+    }
+
+    .priority-grid {
+      display: grid;
+      grid-template-columns: minmax(260px, 1fr) minmax(0, 1.8fr);
+      gap: 12px;
+      align-items: start;
+      margin-bottom: 12px;
+    }
+
+    .priority-grid > * { margin-bottom: 0 !important; min-width: 0; }
+
+    .spot-eyebrow {
+      display: block;
+      font-size: 9.5px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--spot-eyebrow);
+      margin-bottom: 2px;
+    }
+
+    body .quota-card.spot-quota {
+      background: var(--spot-quota-bg);
+      border: 1px solid var(--spot-quota-border);
+      border-left-width: 4px;
+      border-radius: 10px;
+      padding: 12px 14px 14px;
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+    }
+
+    body .quota-card.spot-quota .quota-heading {
+      font-size: 15px;
+      letter-spacing: 0.2px;
+      opacity: 1;
+      color: var(--section-title);
+    }
+
+    body .quota-card.spot-quota .quota-top-bar { margin-bottom: 10px; padding-bottom: 8px; }
+    body .quota-card.spot-quota .quota-models-list { gap: 8px; }
+    body .quota-card.spot-quota .quota-row { padding: 8px 10px; gap: 6px; }
+    body .quota-card.spot-quota .quota-row-top { font-size: 13px; }
+    body .quota-card.spot-quota .quota-model-name { font-size: 13px; }
+    body .quota-card.spot-quota .quota-row-val { font-size: 13px; }
+    body .quota-card.spot-quota .quota-track { height: 8px; }
+
+    .quota-estimate-note {
+      margin-top: 10px;
+      font-size: 10.5px;
+      line-height: 1.4;
+      color: var(--text-muted);
+    }
+
+    body .chart-container.spot-audit {
+      background: var(--spot-audit-bg);
+      border: 1px solid var(--spot-audit-border);
+      border-left-width: 4px;
+      border-radius: 10px;
+      padding: 12px 14px 14px;
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+    }
+
+    .chart-container.spot-audit .chart-title { font-size: 15px; }
+    .chart-container.spot-audit .chart-header { margin-bottom: 8px; }
+
+    .section-heading {
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin: 6px 2px 8px;
+    }
+
+    /* Antes: regra incondicional aqui sobrescrevia o breakpoint de 580px (cascata). */
+    @media (min-width: 581px) {
+      .kpi-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 900px) {
+      .priority-grid { grid-template-columns: minmax(0, 1fr); }
+    }
+
+    /* Narrow webview (e.g. side panel): sidebar becomes a sticky top strip */
+    @media (max-width: 720px) {
+      .app-shell { grid-template-columns: minmax(0, 1fr); }
+      .app-sidebar {
+        position: sticky;
+        height: auto;
+        flex-direction: row;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 8px;
+        overflow-x: auto;
+        overflow-y: hidden;
+        border-right: none;
+        border-bottom: 1px solid var(--border-color);
+        z-index: 50;
+      }
+      .app-sidebar .brand h1, .nav-label { display: none; }
+      .nav-list { flex-direction: row; gap: 2px; }
+      .nav-link { border-left: none; border-bottom: 2px solid transparent; border-radius: 4px; }
+      .nav-link.nav-quota { border-bottom-color: var(--spot-quota-accent); }
+      .nav-link.nav-audit { border-bottom-color: var(--spot-audit-accent); }
+      .app-main { padding: 10px 10px 20px; }
+    }
   </style>
 </head>
 <body>
+<!-- Oathbound: sprite de símbolos dos agentes (origem: Oathbound Identidade.dc.html, L40-102) -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <symbol id="ag-frame" viewBox="0 0 64 64"><path d="M15 6H49A9 9 0 0 0 58 15V49A9 9 0 0 0 49 58H15A9 9 0 0 0 6 49V15A9 9 0 0 0 15 6Z" fill="var(--c)"></path></symbol>
+  <symbol id="ag-oathkeeper" viewBox="0 0 64 64"><use href="#ag-frame"></use><g transform="translate(32 32) scale(0.64) translate(-32 -32)"><g fill="none" stroke="var(--glyph)" stroke-width="6.5"><path d="M22 8V56"></path><circle cx="28" cy="32" r="14"></circle><path d="M22 13.5V25.2" stroke="var(--c)" stroke-width="12"></path><path d="M22 13V25.7"></path><path d="M26.68 45.94A14 14 0 0 1 18.03 41.83" stroke="var(--c)" stroke-width="12"></path><path d="M26.68 45.94A14 14 0 0 1 18.03 41.83"></path></g><g fill="var(--glyph)"><circle cx="22" cy="8" r="6.5"></circle><circle cx="22" cy="56" r="6.5"></circle><circle cx="42" cy="32" r="6.5"></circle></g></g></symbol>
+  <symbol id="ag-scout" viewBox="0 0 64 64"><use href="#ag-frame"></use><g fill="var(--glyph)"><path d="M29 16L34 18.5L19.5 51Z"></path><path d="M35 16L30 18.5L44.5 51Z"></path><circle cx="32" cy="14" r="5"></circle></g><circle cx="32" cy="14" r="1.8" fill="var(--c)"></circle><path d="M23.5 36A23.6 23.6 0 0 0 40.5 36" fill="none" stroke="var(--glyph)" stroke-width="2.5"></path></symbol>
+  <symbol id="ag-scholar" viewBox="0 0 64 64"><use href="#ag-frame"></use><rect x="19" y="14" width="26" height="36" fill="var(--glyph)"></rect><path d="M24.5 14V50" stroke="var(--c)" stroke-width="2.5"></path><path d="M34 14V31L37.5 27.5L41 31V14Z" fill="var(--c)"></path></symbol>
+  <symbol id="ag-scribe" viewBox="0 0 64 64"><use href="#ag-frame"></use><g fill="var(--glyph)"><rect x="17" y="35" width="24" height="15" rx="2"></rect><rect x="23" y="29" width="12" height="7"></rect><rect x="21" y="26.5" width="16" height="3.5" rx="1"></rect></g><ellipse cx="42" cy="17" rx="4.5" ry="10" transform="rotate(34 42 17)" fill="var(--glyph)"></ellipse><path d="M36.5 25L46.5 10" stroke="var(--c)" stroke-width="1.6" stroke-linecap="round"></path><path d="M36.6 24.8L32 31" stroke="var(--glyph)" stroke-width="2.5" stroke-linecap="round"></path><path d="M21 40H37" stroke="var(--c)" stroke-width="2"></path></symbol>
+  <symbol id="ag-smith" viewBox="0 0 64 64"><use href="#ag-frame"></use><path d="M14 22H48C48 29 44 32 39 32V38H45V45H19V38H25V32C20 32 16 28 14 22Z" fill="var(--glyph)"></path></symbol>
+  <symbol id="ag-assayer" viewBox="0 0 64 64"><use href="#ag-frame"></use><circle cx="32" cy="32" r="16" fill="var(--glyph)"></circle><path d="M45.20 32.00L49.00 32.00M41.33 41.33L44.02 44.02M32.00 45.20L32.00 49.00M22.67 41.33L19.98 44.02M18.80 32.00L15.00 32.00M22.67 22.67L19.98 19.98M32.00 18.80L32.00 15.00M41.33 22.67L44.02 19.98" stroke="var(--c)" stroke-width="2.2"></path><circle cx="32" cy="32" r="9" fill="var(--c)"></circle><path d="M26.5 31A6 6 0 0 1 31 26.5" fill="none" stroke="var(--glyph)" stroke-width="2.2" stroke-linecap="round"></path></symbol>
+  <symbol id="ag-sentinel" viewBox="0 0 64 64"><use href="#ag-frame"></use><path d="M18 48V30A14 14 0 0 1 46 30V48Z" fill="var(--glyph)"></path><g stroke="var(--c)" stroke-width="3.5"><path d="M25 20V48M32 17V48M39 20V48M18 37H46"></path></g></symbol>
+  <symbol id="ag-breaker" viewBox="0 0 64 64"><use href="#ag-frame"></use><path d="M13 43L20 23H44L51 43Z" fill="var(--glyph)"></path><path d="M34 20L29 30L36 35L31 46" fill="none" stroke="var(--c)" stroke-width="3.5" stroke-linejoin="bevel"></path></symbol>
+  <symbol id="ag-herald" viewBox="0 0 64 64"><use href="#ag-frame"></use><g transform="translate(0 4)" fill="var(--glyph)"><rect x="10" y="20.5" width="3.5" height="7"></rect><rect x="13" y="22" width="24" height="4"></rect><path d="M36 21.5L51 12V36L36 26.5Z"></path><path d="M17 26H33V44L25 39.5L17 44Z"></path><path d="M25 29.5L28.5 33L25 36.5L21.5 33Z" fill="var(--c)"></path></g></symbol>
+  <symbol id="ag-notary" viewBox="0 0 64 64"><use href="#ag-frame"></use><path d="M17 12H37L45 20V50H17Z" fill="var(--glyph)"></path><path d="M37 12V20H45" fill="none" stroke="var(--c)" stroke-width="2"></path><path d="M22 21H32M22 27.5H40M22 34H40M22 40.5H30" stroke="var(--c)" stroke-width="2.2"></path><circle cx="41" cy="45" r="9" fill="var(--c)"></circle><circle cx="41" cy="45" r="6.5" fill="var(--glyph)"></circle><path d="M41 41.5L44.5 45L41 48.5L37.5 45Z" fill="var(--c)"></path></symbol>
+</svg>
+<style>
+  /* Oathbound: cores dos agentes (tema escuro = padrão; .th-dark/.th-light -> body.vscode-dark/light) */
+  :root {
+    --ag-oathkeeper:#A8822E; --ag-scout:#2E7A73; --ag-scholar:#4A4394; --ag-scribe:#2C5D8F;
+    --ag-smith:#B4502A; --ag-assayer:#5C7F2E; --ag-sentinel:#4E5D6C; --ag-breaker:#7E3B8A;
+    --ag-herald:#B03A5E; --ag-notary:#7A5A3E; --glyph:#EDE6D8;
+    --ob-bg:#161513; --ob-surface:#1F1D1A; --ob-border:#36332D; --ob-text:#EDE6D8; --ob-muted:#A39D90;
+  }
+  body.vscode-light, body.theme-light, html[data-vscode-theme-kind="vscode-light"] body {
+    --glyph:#F2ECDF;
+    --ob-bg:#F7F3EA; --ob-surface:#FFFCF5; --ob-border:#DDD4C1; --ob-text:#1B1A17; --ob-muted:#5E5A50;
+  }
+  .ag-icon { display:inline-block; flex:none; }
+  .ag-oathkeeper{--c:var(--ag-oathkeeper)} .ag-scout{--c:var(--ag-scout)} .ag-scholar{--c:var(--ag-scholar)}
+  .ag-scribe{--c:var(--ag-scribe)} .ag-smith{--c:var(--ag-smith)} .ag-assayer{--c:var(--ag-assayer)}
+  .ag-sentinel{--c:var(--ag-sentinel)} .ag-breaker{--c:var(--ag-breaker)} .ag-herald{--c:var(--ag-herald)}
+  .ag-notary{--c:var(--ag-notary)}
+  /* Contraste no tema claro: nome do agente em ink (~17:1 sobre #FFFCF5) em vez do azul claro */
+  body.vscode-light .agent-name, body.theme-light .agent-name,
+  html[data-vscode-theme-kind="vscode-light"] body .agent-name { color: var(--ob-text) !important; }
+</style>
+<div class="app-shell">
 
-  <!-- Top Navigation Header -->
+  <!-- Narrow sidebar: brand + anchor navigation -->
+  <nav class="app-sidebar" aria-label="Dashboard sections">
+    <div class="brand">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="18" y1="20" x2="18" y2="10"></line>
+        <line x1="12" y1="20" x2="12" y2="4"></line>
+        <line x1="6" y1="20" x2="6" y2="14"></line>
+      </svg>
+      <h1>Antigravity Usage Intelligence</h1>
+    </div>
+    <span class="badge-live"><span class="pulse"></span> Live</span>
+    <div class="nav-list">
+      <span class="nav-label">Priority</span>
+      <a class="nav-link nav-priority nav-quota" href="#quota-banner">Quota</a>
+      <a class="nav-link nav-priority nav-audit" href="#agent-audit-section">Subagents</a>
+      <span class="nav-label">Analytics</span>
+      <a class="nav-link" href="#sec-overview">Overview</a>
+      <a class="nav-link" href="#sec-projects">Projects</a>
+      <a class="nav-link" href="#sec-trend">Trend</a>
+      <a class="nav-link" href="#sec-hours">Hours</a>
+      <a class="nav-link" href="#sec-heatmap">Heatmap</a>
+      <a class="nav-link" href="#models-chart-card">Models</a>
+      <a class="nav-link" href="#sec-sessions">Sessions</a>
+      <a class="nav-link" href="#sec-tools">Tools</a>
+    </div>
+  </nav>
+
+  <main class="app-main">
+
+  <!-- Top bar: streaks + actions -->
   <div class="header">
     <div class="brand-section">
-      <div class="brand">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <line x1="18" y1="20" x2="18" y2="10"></line>
-          <line x1="12" y1="20" x2="12" y2="4"></line>
-          <line x1="6" y1="20" x2="6" y2="14"></line>
-        </svg>
-        <h1>Antigravity Usage Intelligence</h1>
-        <span class="badge-live"><span class="pulse"></span> Live</span>
-      </div>
-
       <!-- Streaks & Consistency Tracker -->
       <div class="streaks-ribbon" id="streaks-ribbon">
         <span class="streaks-item" title="Current consecutive days coding with Antigravity">
@@ -3383,15 +3675,20 @@
     <button class="filter-btn" data-range="all">All Time</button>
   </div>
 
-  <!-- Compact & High-Density Model Quota Card -->
-  <div class="quota-card" id="quota-banner">
+  <!-- Priority zone: Model Quota + Subagents Audit -->
+  <div class="priority-grid">
+  <!-- Model Quota Card (spotlight) -->
+  <div class="quota-card spot-quota" id="quota-banner">
     <!-- Top Bar: Title, Plan Badge, Countdown Timer -->
     <div class="quota-top-bar">
       <div class="quota-title-wrap">
         <span class="quota-bolt-icon">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
         </span>
-        <span class="quota-heading">Model Quota</span>
+        <span>
+          <span class="spot-eyebrow">Rolling 5h window</span>
+          <span class="quota-heading">Model Quota</span>
+        </span>
         <span class="quota-status-badge" id="quota-status">Pro</span>
       </div>
       <div class="quota-timer-wrap" title="Sliding window reset countdown">
@@ -3435,6 +3732,8 @@
       </div>
     </div>
 
+    <div class="quota-estimate-note">Local estimate from on-disk activity, not provider billing.</div>
+
     <!-- Hidden compatibility elements -->
     <span id="quota-total-summary" style="display:none;"></span>
     <span id="gemini-ring-pct" style="display:none;"></span>
@@ -3443,12 +3742,46 @@
     <span id="claude-meta" style="display:none;"></span>
   </div>
 
-  <!-- Hero KPI Cards (Refined Glassmorphic 7-Card Balanced Grid) -->
-  <div style="font-size:10px; color:var(--text-muted); margin:-4px 2px 8px; display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+  <!-- Subagents Audit (agent-audit) -->
+  <div class="chart-container spot-audit" id="agent-audit-section">
+    <div class="chart-header">
+      <div>
+        <span class="spot-eyebrow">Governance</span>
+        <div class="chart-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          Subagents Audit (<span class="mono">agent-audit</span>)
+        </div>
+      </div>
+      <div id="agent-audit-summary-badges" style="display:flex; flex-wrap:wrap; gap:6px; align-items:center;"></div>
+    </div>
+    <div class="table-wrapper" style="max-height:320px; overflow-y:auto;">
+      <table class="data-table" style="min-width:0;">
+        <thead>
+          <tr>
+            <th>Agent</th>
+            <th>Source</th>
+            <th style="text-align:right;">Execs</th>
+            <th style="text-align:right;">Calls</th>
+            <th style="text-align:right;">Blocks</th>
+            <th style="text-align:right;">Block %</th>
+            <th>Top Tools</th>
+          </tr>
+        </thead>
+        <tbody id="agent-audit-tbody"></tbody>
+      </table>
+    </div>
+    <div id="agent-audit-reasons" style="display:flex; flex-wrap:wrap; gap:6px; margin-top:10px;"></div>
+  </div>
+  </div>
+
+  <!-- Data provenance notes -->
+  <div style="font-size:10px; color:var(--text-muted); margin:0 2px 8px; display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
     <span id="data-freshness-note" title="Token counts come straight from Antigravity's local session databases">Tokens: exact local counts</span>
     <span style="opacity:0.4;">·</span>
     <span title="Quota bars estimate a rolling 5-hour window from local activity — not provider billing">Quota bars: local estimate, not a bill</span>
   </div>
+
+  <div class="section-heading" id="sec-overview">Overview</div>
   <div class="kpi-grid">
     <!-- Hero Card: Total Tokens (Spans 2 columns) -->
     <div class="kpi-card kpi-card-hero" id="card-total-tokens">
@@ -3541,7 +3874,7 @@
   </div>
 
   <!-- Projects Breakdown -->
-  <div class="chart-container">
+  <div class="chart-container" id="sec-projects">
     <div class="chart-header">
       <div class="chart-title">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
@@ -3564,7 +3897,7 @@
   </div>
 
   <!-- Daily Stacked Bar Chart -->
-  <div class="chart-container">
+  <div class="chart-container" id="sec-trend">
     <div class="chart-header">
       <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
         <div class="chart-title">
@@ -3599,7 +3932,7 @@
   </div>
 
   <!-- 24-Hour Peak Coding Hours Widget -->
-  <div class="chart-container">
+  <div class="chart-container" id="sec-hours">
     <div class="chart-header">
       <div class="chart-title">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
@@ -3615,7 +3948,7 @@
   </div>
 
   <!-- Agent Activity Heatmap -->
-  <div class="chart-container">
+  <div class="chart-container" id="sec-heatmap">
     <div class="chart-header">
       <div class="chart-title">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
@@ -3670,7 +4003,7 @@
   </div>
 
   <!-- Recorded Agent Sessions with Quick Filter Pills -->
-  <div class="chart-container">
+  <div class="chart-container" id="sec-sessions">
     <div class="table-controls">
       <div class="chart-title">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
@@ -3719,7 +4052,7 @@
   </div>
 
   <!-- Tools Breakdown -->
-  <div class="chart-container">
+  <div class="chart-container" id="sec-tools">
     <div class="chart-header">
       <div class="chart-title">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
@@ -3731,33 +4064,8 @@
     </div>
   </div>
 
-  <!-- Subagents Audit (agent-audit) -->
-  <div class="chart-container" id="agent-audit-section">
-    <div class="chart-header">
-      <div class="chart-title">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-        Subagents Audit (<span class="mono">agent-audit</span>)
-      </div>
-      <div id="agent-audit-summary-badges" style="display:flex; flex-wrap:wrap; gap:6px; align-items:center;"></div>
-    </div>
-    <div class="table-wrapper" style="max-height:320px; overflow-y:auto;">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>Agent</th>
-            <th>Source</th>
-            <th style="text-align:right;">Execs</th>
-            <th style="text-align:right;">Calls</th>
-            <th style="text-align:right;">Blocks</th>
-            <th style="text-align:right;">Block %</th>
-            <th>Top Tools</th>
-          </tr>
-        </thead>
-        <tbody id="agent-audit-tbody"></tbody>
-      </table>
-    </div>
-    <div id="agent-audit-reasons" style="display:flex; flex-wrap:wrap; gap:6px; margin-top:10px;"></div>
-  </div>
+  </main>
+</div>
 
   <!-- Session Details Drawer Backdrop & Drawer -->
   <div class="drawer-backdrop" id="drawer-backdrop"></div>
@@ -3965,13 +4273,12 @@
           }
         }
         
-        if (isLight) {
-          document.body.classList.add('theme-light');
-          document.body.classList.remove('theme-dark');
-        } else {
-          document.body.classList.add('theme-dark');
-          document.body.classList.remove('theme-light');
-        }
+        // Only touch classList when the state actually changes (avoids MutationObserver churn).
+        const want = isLight ? 'theme-light' : 'theme-dark';
+        const other = isLight ? 'theme-dark' : 'theme-light';
+        if (document.body.classList.contains(want) && !document.body.classList.contains(other)) return;
+        document.body.classList.remove(other);
+        document.body.classList.add(want);
       } catch (e) {
         console.error('Theme sync error', e);
       }
@@ -3983,6 +4290,15 @@
       const themeObserver = new MutationObserver(() => syncThemeClass());
       themeObserver.observe(document.body, { attributes: true, attributeFilter: ['class', 'data-vscode-theme-kind', 'style'] });
       themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-vscode-theme-kind'] });
+    }
+
+    // Lightweight payload fingerprint (length + djb2 over JSON) to detect unchanged polls.
+    let lastPayloadSig = null;
+    function payloadSignature(data) {
+      const s = JSON.stringify(data);
+      let h = 5381;
+      for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
+      return s.length + ':' + h;
     }
 
     let currentData = null;
@@ -4262,6 +4578,17 @@
       renderAgentAudit(data.agent_audit);
     }
 
+    /* Mapeia o nome do agente ao símbolo Oathbound (ag-*). Fallback: notary. */
+    function agentIconKey(name) {
+      const n = String(name || '').toLowerCase().replace(/\s+/g, '');
+      const map = {
+        smith: 'smith', scout: 'scout', scholar: 'scholar', scribe: 'scribe',
+        assayer: 'assayer', sentinel: 'sentinel', tester: 'breaker', qa: 'breaker',
+        orquestrador: 'oathkeeper', 'general-purpose': 'oathkeeper', docs: 'herald'
+      };
+      return Object.prototype.hasOwnProperty.call(map, n) ? map[n] : 'notary';
+    }
+
     function renderAgentAudit(audit) {
       const badgesEl = document.getElementById('agent-audit-summary-badges');
       const tbody = document.getElementById('agent-audit-tbody');
@@ -4289,7 +4616,7 @@
           const srcText = (a.sources || []).join(', ') || '—';
           const blockColor = a.blocks > 0 ? '#f87171' : 'var(--text-muted)';
           tr.innerHTML = `
-            <td class="mono" style="font-weight:600; color:var(--accent-blue);">${escapeHtml(a.name)}</td>
+            <td class="mono agent-name" style="font-weight:600;"><svg class="ag-icon ag-${agentIconKey(a.name)}" viewBox="0 0 64 64" width="16" height="16" aria-hidden="true" focusable="false" style="vertical-align:-3px; margin-right:6px;"><use href="#ag-${agentIconKey(a.name)}"></use></svg>${escapeHtml(a.name)}</td>
             <td style="color:var(--text-muted); font-size:11px;">${escapeHtml(srcText)}</td>
             <td style="text-align:right;" class="mono">${(a.executions || 0).toLocaleString()}</td>
             <td style="text-align:right;" class="mono">${(a.calls || 0).toLocaleString()}</td>
@@ -5643,7 +5970,12 @@
       if (message.command === 'loadStats') {
         showLoading(false);
         document.getElementById('error-banner').style.display = 'none';
-        renderUI(message.data);
+        // Skip the full re-render when the payload is unchanged (typical 30s poll).
+        const sig = payloadSignature(message.data);
+        if (sig !== lastPayloadSig) {
+          lastPayloadSig = sig;
+          renderUI(message.data);
+        }
         const freshnessEl = document.getElementById('data-freshness-note');
         if (freshnessEl) freshnessEl.textContent = (message.data.is_demo ? 'DEMO sample data · ' : 'Tokens: exact local counts · ') + 'updated ' + new Date().toLocaleTimeString();
 
