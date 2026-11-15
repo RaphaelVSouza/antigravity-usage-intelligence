@@ -938,10 +938,43 @@ def _count_subagent_tools(convo_id, tcache):
     return {}
 
 
+def _parse_claude_audit_file(fpath):
+    """Extracts compact per-record tuples from agent-audit.jsonl* for (mtime, size) caching."""
+    records = []
+    try:
+        with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    r = json.loads(line)
+                except Exception:
+                    continue
+                day = str(r.get("ts") or "")[:10]
+                if len(day) != 10:
+                    continue
+                records.append([
+                    day,
+                    str(r.get("agente") or "?").strip() or "?",
+                    r.get("sessao") or "",
+                    r.get("agent_id") or "",
+                    str(r.get("ferramenta") or "?"),
+                    r.get("alvo") or "",
+                    bool(r.get("bloqueado")),
+                    bool(r.get("erro")),
+                    str(r.get("motivo") or "sem motivo") if r.get("bloqueado") else "",
+                ])
+    except Exception:
+        pass
+    return records
+
+
 def collect_agent_audit(start_date=None, end_date=None):
     """Aggregates ~/.claude/state/agent-audit.jsonl* and Antigravity invoke_subagent transcripts."""
     audit_dir = os.environ.get("AGENT_AUDIT_DIR") or os.path.join(os.path.expanduser("~"), ".claude", "state")
     agents = {}
+    tcache = _TranscriptCache()
 
     def get_entry(name):
         if name not in agents:
@@ -961,51 +994,33 @@ def collect_agent_audit(start_date=None, end_date=None):
             }
         return agents[name]
 
-    # 1. Claude Code agent-audit.jsonl*
+    # 1. Claude Code agent-audit.jsonl* (parse cacheado por path/mtime/size; filtro de data no replay)
     for fpath in _iter_audit_files(audit_dir):
-        try:
-            with open(fpath, "r", encoding="utf-8", errors="replace") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        r = json.loads(line)
-                    except Exception:
-                        continue
-                    ts = str(r.get("ts") or "")
-                    day = ts[:10]
-                    if len(day) != 10:
-                        continue
-                    if start_date and day < start_date:
-                        continue
-                    if end_date and day > end_date:
-                        continue
+        for day, ag_name, sessao, agent_id, tool_name, alvo, bloqueado, erro, motivo in (tcache.get(fpath, _parse_claude_audit_file) or []):
+            if start_date and day < start_date:
+                continue
+            if end_date and day > end_date:
+                continue
 
-                    ag_name = str(r.get("agente") or "?").strip() or "?"
-                    e = get_entry(ag_name)
-                    e["sources"].add("claude")
-                    if r.get("sessao"):
-                        e["sessoes"].add(r["sessao"])
-                    if r.get("agent_id"):
-                        e["agent_ids"].add(r["agent_id"])
+            e = get_entry(ag_name)
+            e["sources"].add("claude")
+            if sessao:
+                e["sessoes"].add(sessao)
+            if agent_id:
+                e["agent_ids"].add(agent_id)
 
-                    tool_name = str(r.get("ferramenta") or "?")
-                    chave = f"{r.get('agent_id')}|{tool_name}|{r.get('alvo')}"
-                    par = e["pares"].setdefault(chave, {"chamadas": 0, "bloqueios": 0, "ferramenta": tool_name})
-                    if r.get("bloqueado"):
-                        e["bloqueios"] += 1
-                        par["bloqueios"] += 1
-                        motivo = str(r.get("motivo") or "sem motivo")
-                        e["motivos"][motivo] += 1
-                    else:
-                        e["chamadas"] += 1
-                        par["chamadas"] += 1
-                        if r.get("erro"):
-                            e["erros"] += 1
-                        e["ferramentas"][tool_name] += 1
-        except Exception:
-            continue
+            chave = f"{agent_id}|{tool_name}|{alvo}"
+            par = e["pares"].setdefault(chave, {"chamadas": 0, "bloqueios": 0, "ferramenta": tool_name})
+            if bloqueado:
+                e["bloqueios"] += 1
+                par["bloqueios"] += 1
+                e["motivos"][motivo] += 1
+            else:
+                e["chamadas"] += 1
+                par["chamadas"] += 1
+                if erro:
+                    e["erros"] += 1
+                e["ferramentas"][tool_name] += 1
 
     for e in agents.values():
         for par in e["pares"].values():
@@ -1016,7 +1031,6 @@ def collect_agent_audit(start_date=None, end_date=None):
         e["chamadas"] += e["orfas"]
 
     # 2. Antigravity invoke_subagent transcripts (parse cacheado por path/mtime/size; filtro de data aplicado no replay)
-    tcache = _TranscriptCache()
     seen_convos = set()
     for src in DATA_SOURCES:
         brain_dir = os.path.join(src["root"], "brain")

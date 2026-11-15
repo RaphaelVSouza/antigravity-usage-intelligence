@@ -4612,7 +4612,7 @@
       } else {
         agents.forEach(a => {
           const tr = document.createElement('tr');
-          const toolsText = (a.top_tools || []).slice(0, 4).map(x => `${escapeHtml(x.name)}:${x.count}`).join(' · ') || '—';
+          const toolsText = (a.top_tools || []).slice(0, 4).map(x => `${escapeHtml(x.name)}:${Number(x.count) || 0}`).join(' · ') || '—';
           const srcText = (a.sources || []).join(', ') || '—';
           const blockColor = a.blocks > 0 ? '#f87171' : 'var(--text-muted)';
           tr.innerHTML = `
@@ -4633,7 +4633,7 @@
         const pill = document.createElement('div');
         pill.className = 'tool-item';
         pill.style.fontSize = '11px';
-        pill.innerHTML = `<span style="color:#f87171; font-weight:600;">x${r.count}</span> <span style="color:var(--text-muted);">${escapeHtml(r.reason)}</span>`;
+        pill.innerHTML = `<span style="color:#f87171; font-weight:600;">x${Number(r.count) || 0}</span> <span style="color:var(--text-muted);">${escapeHtml(r.reason)}</span>`;
         reasonsEl.appendChild(pill);
       });
     }
@@ -5557,10 +5557,12 @@
         const tr = document.createElement('tr');
         tr.className = 'clickable-row';
         const shortId = s.convo_id ? s.convo_id.slice(0, 8) : 'unknown';
+        const rawSurf = String(s.surface || 'ide').toLowerCase();
+        const surfClass = (rawSurf === 'ide' || rawSurf === 'cli' || rawSurf === 'core') ? rawSurf : 'ide';
         tr.innerHTML = `
           <td class="mono" style="color:var(--text-muted);">${escapeHtml(s.date)}</td>
           <td>
-            <span class="surface-badge surface-${(s.surface || 'ide').toLowerCase()}">${escapeHtml(s.surface || 'IDE')}</span>
+            <span class="surface-badge surface-${surfClass}">${escapeHtml(s.surface || 'IDE')}</span>
             <span class="mono project-tag">${escapeHtml(s.project || 'General')}</span>
           </td>
           <td class="session-title-cell" title="${escapeHtml(s.title || 'Session ' + shortId)}">
@@ -5569,7 +5571,7 @@
             <button class="btn-copy" data-id="${escapeHtml(s.convo_id)}" title="Copy Conversation ID">📋</button>
           </td>
           <td class="col-hide-narrow" style="color:var(--text-muted); font-size:11px;">${escapeHtml(s.model)}</td>
-          <td class="col-hide-narrow mono">${s.turn_count}</td>
+          <td class="col-hide-narrow mono">${Number(s.turn_count) || 0}</td>
           <td class="col-hide-narrow mono" style="color:var(--text-muted);">${formatDuration(s.duration_sec)}</td>
           <td class="col-hide-narrow mono table-cell-input">${formatNumber(s.input_tokens)}</td>
           <td class="col-hide-narrow mono table-cell-cached">${formatNumber(s.cached_tokens)}</td>
@@ -6015,6 +6017,7 @@
         if (r === '7d') { const d = new Date(now); d.setDate(d.getDate() - 7); return { start: fmt(d), end: fmt(now) }; }
         if (r === '30d') { const d = new Date(now); d.setDate(d.getDate() - 30); return { start: fmt(d), end: fmt(now) }; }
         if (r === '90d') { const d = new Date(now); d.setDate(d.getDate() - 90); return { start: fmt(d), end: fmt(now) }; }
+        if (r === '180d') { const d = new Date(now); d.setDate(d.getDate() - 180); return { start: fmt(d), end: fmt(now) }; }
         return { start: null, end: null };
       }
       function silentRefresh() {

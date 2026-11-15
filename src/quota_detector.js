@@ -1,4 +1,4 @@
-const { exec } = require('child_process');
+const { execFile } = require('child_process');
 const https = require('https');
 const http = require('http');
 
@@ -19,9 +19,9 @@ function recordScanFailure() {
   nextScanAt = Date.now() + delay;
 }
 
-function execCommand(cmd) {
+function execBin(bin, args) {
   return new Promise((resolve) => {
-    exec(cmd, { timeout: 4000 }, (err, stdout, stderr) => {
+    execFile(bin, args, { timeout: 4000 }, (err, stdout, stderr) => {
       resolve({ err, stdout: stdout ? stdout.trim() : '', stderr });
     });
   });
@@ -76,15 +76,15 @@ function queryStatus(port, csrfToken, protocol) {
 
 async function listServerCandidates() {
   if (process.platform === 'win32') {
-    const psCmd = 'powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.Name -like \'*language_server*\' -and $_.CommandLine -like \'*--csrf_token*\' } | Select-Object ProcessId, CommandLine | ConvertTo-Json -Compress"';
-    const { stdout } = await execCommand(psCmd);
+    const psScript = "Get-CimInstance Win32_Process | Where-Object { $_.Name -like '*language_server*' -and $_.CommandLine -like '*--csrf_token*' } | Select-Object ProcessId, CommandLine | ConvertTo-Json -Compress";
+    const { stdout } = await execBin('powershell', ['-NoProfile', '-Command', psScript]);
     if (!stdout) return [];
     try {
       const parsed = JSON.parse(stdout);
       const arr = Array.isArray(parsed) ? parsed : [parsed];
       return arr
-        .filter((c) => c && c.ProcessId && c.CommandLine)
-        .map((c) => ({ pid: c.ProcessId, cmd: c.CommandLine }));
+        .filter((c) => c && Number.isInteger(Number(c.ProcessId)) && Number(c.ProcessId) > 0 && c.CommandLine)
+        .map((c) => ({ pid: Number(c.ProcessId), cmd: c.CommandLine }));
     } catch (e) {
       return [];
     }
@@ -92,7 +92,7 @@ async function listServerCandidates() {
 
   // macOS / Linux: pgrep prints "<pid> <full command line>" as plain text,
   // so parse lines instead of expecting JSON.
-  const { stdout } = await execCommand('pgrep -fa language_server');
+  const { stdout } = await execBin('pgrep', ['-fa', 'language_server']);
   if (!stdout) return [];
   const out = [];
   for (const line of stdout.split('\n')) {
@@ -106,10 +106,11 @@ async function listServerCandidates() {
 
 async function listListeningPorts(pid) {
   const ports = new Set();
+  if (!Number.isInteger(pid) || pid <= 0) return ports;
   try {
     if (process.platform === 'win32') {
       // Filtra o PID na coluna exata (última) em JS: evita casar PID 12 com 123.
-      const { stdout: netOut } = await execCommand('netstat -ano');
+      const { stdout: netOut } = await execBin('netstat', ['-ano']);
       if (netOut) {
         for (const line of netOut.split('\n')) {
           const cols = line.trim().split(/\s+/);
@@ -119,16 +120,18 @@ async function listListeningPorts(pid) {
         }
       }
     } else if (process.platform === 'linux') {
-      const { stdout } = await execCommand(`ss -ltnp 2>/dev/null | grep "pid=${pid},"`);
+      const { stdout } = await execBin('ss', ['-ltnp']);
       if (stdout) {
+        const pidMarker = `pid=${pid},`;
         for (const line of stdout.split('\n')) {
+          if (!line.includes(pidMarker)) continue;
           const m = line.match(/:(\d+)\s/);
           if (m) ports.add(parseInt(m[1], 10));
         }
       }
     } else {
       // macOS: lsof is best-effort (may not exist -> ignored below).
-      const { stdout } = await execCommand(`lsof -aPn -iTCP -sTCP:LISTEN -p ${pid} 2>/dev/null`);
+      const { stdout } = await execBin('lsof', ['-aPn', '-iTCP', '-sTCP:LISTEN', '-p', String(pid)]);
       if (stdout) {
         for (const line of stdout.split('\n')) {
           const m = line.match(/:(\d+)\s+\(LISTEN\)/);
@@ -279,8 +282,7 @@ async function getLiveQuota(forceRefresh = false) {
   // Scan failed: serve last-known data explicitly marked stale
   // so the dashboard never mistakes it for a fresh reading.
   if (cachedQuota) {
-    cachedQuota.stale = true;
-    return cachedQuota;
+    return { ...cachedQuota, stale: true };
   }
   return null;
 }

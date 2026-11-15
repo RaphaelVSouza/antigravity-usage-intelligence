@@ -106,9 +106,9 @@ async function resolvePythonPath() {
     if (fs.existsSync(venvPy)) return venvPy;
   }
 
-  // Check workspace .venv
+  // Check workspace .venv (only in trusted workspaces)
   const folders = vscode.workspace.workspaceFolders;
-  if (folders) {
+  if (vscode.workspace.isTrusted && folders) {
     for (const folder of folders) {
       const venvPy = process.platform === 'win32'
         ? path.join(folder.uri.fsPath, '.venv', 'Scripts', 'python.exe')
@@ -250,7 +250,7 @@ function getWebviewContent(webview, extensionUri) {
   let html = fs.readFileSync(htmlPath, 'utf8');
 
   const nonce = crypto.randomBytes(16).toString('base64');
-  const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} https: data:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">`;
+  const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">`;
 
   // Inject CSP and nonce
   html = html.replace('<head>', `<head>\n  ${cspMeta}`);
@@ -351,9 +351,12 @@ async function handleWebviewMessage(webview, message) {
         break;
       }
       case 'openFolder': {
-        if (message.path) {
-          const uri = vscode.Uri.file(message.path);
-          vscode.commands.executeCommand('vscode.openFolder', uri, true);
+        if (typeof message.path === 'string' && message.path.trim()) {
+          const resolved = path.resolve(message.path);
+          if (fs.existsSync(resolved) && fs.statSync(resolved).isDirectory()) {
+            const uri = vscode.Uri.file(resolved);
+            vscode.commands.executeCommand('vscode.openFolder', uri, true);
+          }
         }
         break;
       }
@@ -515,12 +518,16 @@ function activate(context) {
   // 5. Register Export Command
   context.subscriptions.push(
     vscode.commands.registerCommand('antigravity-stats.exportReport', async () => {
-      const data = await fetchStatsData();
-      const doc = await vscode.workspace.openTextDocument({
-        content: JSON.stringify(data, null, 2),
-        language: 'json'
-      });
-      await vscode.window.showTextDocument(doc);
+      try {
+        const data = await fetchStatsData();
+        const doc = await vscode.workspace.openTextDocument({
+          content: JSON.stringify(data, null, 2),
+          language: 'json'
+        });
+        await vscode.window.showTextDocument(doc);
+      } catch (err) {
+        vscode.window.showErrorMessage(`Antigravity Stats export failed: ${err.message}`);
+      }
     })
   );
 
